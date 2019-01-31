@@ -11,7 +11,14 @@ from holodeck.environments import *
 from holodeck import agents
 from holodeck.environments import *
 from holodeck.sensors import Sensors
+from PIL import Image
 
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+img_transform = transforms.Compose([
+                             transforms.Grayscale(),
+                             transforms.ToTensor(),
+                             normalize,
+                         ])
 
 class SinglePoseDataset(Dataset):
 
@@ -20,13 +27,9 @@ class SinglePoseDataset(Dataset):
         self.transform = transform
 
         self.img_dir = img_dir
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        self.images = datasets.ImageFolder(img_dir,
-                         transforms.Compose([
-                             transforms.Grayscale(),
-                             transforms.ToTensor(),
-                             normalize,
-                         ]))
+
+        self.images = datasets.ImageFolder(img_dir, img_transform)
+
 
     def __len__(self):
         return 1000
@@ -109,18 +112,32 @@ def predict_pose():
 
     model = torch.load('models/single-pose-model')
 
-    sensors = [Sensors.PIXEL_CAMERA, Sensors.LOCATION_SENSOR, Sensors.VELOCITY_SENSOR]
+    sensors = [Sensors.VIEWPORT_CAPTURE, Sensors.LOCATION_SENSOR, Sensors.VELOCITY_SENSOR]
     agent = AgentDefinition("uav0", agents.UavAgent, sensors)
     env = HolodeckEnvironment(agent, start_world=False)
     env.agents["uav0"].set_control_scheme(1)
     command = [0, 0, 10, 50]
 
-    for i in range(1):
+    for i in range(10):
         env.reset()
-        for _ in range(100):
+        for _ in range(1000):
+            env.reset()
             state, reward, terminal, _ = env.step(command)
+            orig_image = state[Sensors.VIEWPORT_CAPTURE][:, :, 0:3]
+            image = Image.fromarray(orig_image)
+            image = torch.unsqueeze(img_transform(image),0)
+            orientation_pred = model(image.cuda()).cpu().detach().numpy().squeeze(0)
+            or_arrow = -orientation_pred[0:3] *3000
 
-            pixels = state[Sensors.PIXEL_CAMERA]
+            for _ in range(100):
+                start_loc = [-180, 4010, 1110]
+                end_loc = [-180, 4010, 1110]
+                end_loc[0] += or_arrow[0]
+                end_loc[1] += or_arrow[1]
+                end_loc[2] += or_arrow[2]
+                env.draw_arrow(start_loc, end_loc, [0, 0, 255], 10)
+                env.tick()
+
 
 
 if __name__ == '__main__':
