@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from holodeck.environments import *
 from holodeck import agents
 from holodeck.environments import *
+import cv2
 from holodeck.sensors import Sensors
 from PIL import Image
 
@@ -108,40 +109,56 @@ def train_pose():
 
         torch.save(model, "models/single-pose-model")
 
+
+# TODO test that this is the same after as the dataset method.
+def prep_image(image):
+    image = Image.fromarray(image)
+    image = torch.unsqueeze(img_transform(image), 0)
+    return image
+
+def draw_axes(env, start_loc, orientation):
+    end_loc = start_loc + 10 * orientation[0:3]
+    env.draw_arrow(start_loc, end_loc, [255, 0, 0], 10)
+    end_loc = start_loc + 10 * orientation[3:6]
+    env.draw_arrow(start_loc, end_loc, [0, 255, 0], 10)
+    end_loc = start_loc + 10 * orientation[6:9]
+    env.draw_arrow(start_loc, end_loc, [0, 0, 255], 10)
+
+
 def predict_pose():
 
     model = torch.load('models/single-pose-model')
 
-    sensors = [Sensors.VIEWPORT_CAPTURE, Sensors.LOCATION_SENSOR, Sensors.VELOCITY_SENSOR]
+    sensors = [Sensors.VIEWPORT_CAPTURE, Sensors.LOCATION_SENSOR, Sensors.VELOCITY_SENSOR, Sensors.ORIENTATION_SENSOR]
     agent = AgentDefinition("uav0", agents.UavAgent, sensors)
-    env = HolodeckEnvironment(agent, start_world=False)
+    cam_sensor = [Sensors.RGB_CAMERA]
+    cam_agent = AgentDefinition("sphere0", agents.ContinuousSphereAgent, cam_sensor)
+    env = HolodeckEnvironment([agent, cam_agent], start_world=False, camera_height=512, camera_width=512)
     env.agents["uav0"].set_control_scheme(1)
-    command = [0, 0, 10, 50]
 
-    for i in range(10):
+    for _ in range(10):
         env.reset()
+        states = env.tick()
+        uav_state = states["uav0"]
+        image = states["sphere0"][Sensors.RGB_CAMERA][:, :, 0:3]
+        image = prep_image(image)
+
+        # TODO retrain network with euler angles instead of axes
+        pred_orientation = model(image.cuda()).cpu().detach().numpy().squeeze(0)
+        true_orientation = uav_state[Sensors.ORIENTATION_SENSOR][:].flatten()
+
+        diff = true_orientation - pred_orientation
+        orientation = pred_orientation
+
         for _ in range(1000):
-            env.reset()
-            state, reward, terminal, _ = env.step(command)
-            orig_image = state[Sensors.VIEWPORT_CAPTURE][:, :, 0:3]
-            image = Image.fromarray(orig_image)
-            image = torch.unsqueeze(img_transform(image),0)
-            orientation_pred = model(image.cuda()).cpu().detach().numpy().squeeze(0)
-            or_arrow = -orientation_pred[0:3] *3000
-
-            for _ in range(100):
-                start_loc = [-180, 4010, 1110]
-                end_loc = [-180, 4010, 1110]
-                end_loc[0] += or_arrow[0]
-                end_loc[1] += or_arrow[1]
-                end_loc[2] += or_arrow[2]
-                env.draw_arrow(start_loc, end_loc, [0, 0, 255], 10)
-                env.tick()
-
+            start_loc = uav_state[Sensors.LOCATION_SENSOR][:]
+            draw_axes(env, start_loc, orientation)
+            env.tick()
 
 
 if __name__ == '__main__':
     predict_pose()
+
 
 
 

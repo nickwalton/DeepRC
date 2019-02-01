@@ -352,6 +352,10 @@ class HolodeckEnvironment(object):
             color (list of 3 floats): RGB values for the color
             thickness (float): thickness of the arrow
         """
+        start = start[:] * 100
+        end = end[:] * 100
+        start = start.tolist()
+        end = end.tolist()
         color = [255, 0, 0] if color is None else color
         self._should_write_to_command_buffer = True
         command_to_send = DebugDrawCommand(1, start, end, color, thickness)
