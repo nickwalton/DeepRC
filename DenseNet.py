@@ -1,9 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, utils, datasets
 
 # TODO Include dropout
 # Implemented DenseNet from https://arxiv.org/pdf/1608.06993.pdf

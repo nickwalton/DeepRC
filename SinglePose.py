@@ -2,46 +2,20 @@ from DenseNet import DenseNet
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms, utils, datasets
-import pandas as pd
-from skimage import io, transform
 import matplotlib.pyplot as plt
 from holodeck.environments import *
 from holodeck import agents
-from holodeck.environments import *
 import cv2
 from holodeck.sensors import Sensors
 from PIL import Image
 
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+from PlaneData import *
+
 img_transform = transforms.Compose([
-                             transforms.Grayscale(),
-                             transforms.ToTensor(),
-                             normalize,
-                         ])
-
-class SinglePoseDataset(Dataset):
-
-    def __init__(self, img_dir, csv_file):
-        self.data = pd.read_csv(csv_file)
-        self.transform = transform
-
-        self.img_dir = img_dir
-
-        self.images = datasets.ImageFolder(img_dir, img_transform)
-
-
-    def __len__(self):
-        return 1000
-
-    def __getitem__(self, idx):
-        orientation = torch.tensor(self.data.iloc[idx, 1:].values.astype(dtype=np.float32))
-
-        image = self.images[idx]
-        sample = (image[0], orientation)
-
-        return sample
+        transforms.Grayscale(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
 
 
 def train(model, train_loader, optimizer, loss_func):
@@ -86,9 +60,9 @@ def train_pose():
     lr = 1e-4
     epochs = 5
 
-    csv_path = "plane_data1/orientations.csv"
-    image_dir = "plane_data1"
-    pose_dataset = SinglePoseDataset(image_dir, csv_path)
+    csv_path = "data/plane_data1/orientations.csv"
+    image_dir = "data/plane_data1"
+    pose_dataset = SinglePoseDataset(image_dir, csv_path, img_transform)
 
     input_size = pose_dataset[0][0].shape[1]
     output_size = 9
