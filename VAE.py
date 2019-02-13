@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import cv2
 import math
 import scipy.misc
+import bisect
 
 
 img_transform = transforms.Compose([
@@ -89,19 +90,25 @@ class CodeBook(object):
 
         print("Codebook Finished")
 
-    def predict(self, image):
+    def _sort_by_dist(self, val):
+        return val[1]
+
+    def predict(self, image, n=1):
         z = self.model.encode(image.unsqueeze(0)).squeeze(0)
 
-        closest_dist = -1
-        closest_ind = -1
+        top_dist_list = [(-1, -math.inf)]*n
 
         for i, vec in enumerate(self.z_vecs):
-            dist = nn.functional.cosine_similarity(z, vec, dim=0)
-            if dist > closest_dist:
-                closest_dist = dist
-                closest_ind = i
+            dist = nn.functional.cosine_similarity(z, vec, dim=0).cpu().detach().numpy()
 
-        return closest_ind, self.rots[closest_ind]
+            # insert into proper place in top_dist_list
+            for j in range(n):
+                if dist > top_dist_list[j][1]:
+                    top_dist_list.insert(j, (i, dist))
+                    top_dist_list.pop()
+                    break
+
+        return top_dist_list
 
 
 def train(model, train_loader, optimizer, loss_func, epoch):
@@ -181,22 +188,23 @@ def ae_test():
     model = torch.load("models/AE-model300")
     codebook = CodeBook(model, pose_dataset)
 
-    for i in range(501,800):
+    for i in range(500, 600):
         sample = pose_dataset[i]
         img = sample[0]
         orientation = sample[1]
-        ind, pred = codebook.predict(img)
+        preds = codebook.predict(img, n=4)
+        pred_indices = [pred[0] for pred in preds]
 
-        pred_pic = pose_dataset[ind][0]
-
-        scipy.misc.imsave('test_imgs/test' + str(i) + 'output.jpg',
-                          np.swapaxes(img.numpy(), 0, 2))
         scipy.misc.imsave('test_imgs/test' + str(i) + 'input.jpg',
-                          np.swapaxes(pred_pic.numpy(), 0, 2))
+                          np.swapaxes(img.numpy(), 0, 2))
 
+        for j in range(4):
+            pred_pic = pose_dataset[pred_indices[j]][0]
 
-        print(orientation)
-        print(pred)
+            scipy.misc.imsave('test_imgs/test' + str(i) + str("-") + str(j) + 'output.jpg',
+                              np.swapaxes(pred_pic.numpy(), 0, 2))
+
+        print("Saving img" + str(i))
 
 
 if __name__ == '__main__':
