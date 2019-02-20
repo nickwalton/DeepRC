@@ -46,7 +46,7 @@ class SinglePoseDataset(Dataset):
         return sample
 
 
-def save_img(state, writer, img_loc, img_ind):
+def save_img(state, writer, img_loc, img_ind, pixel_loc = None):
     image = state[Sensors.VIEWPORT_CAPTURE][:, :, 0:3]
     dir = state[Sensors.ORIENTATION_SENSOR]
     img_name = img_loc + "images/im" + str(img_ind) + ".jpg"
@@ -54,6 +54,9 @@ def save_img(state, writer, img_loc, img_ind):
     row = [img_name, str(dir[0][0]), str(dir[0][1]), str(dir[0][2]),
            str(dir[1][0]), str(dir[1][1]), str(dir[1][2]),
            str(dir[2][0]), str(dir[2][1]), str(dir[2][2])]
+    if pixel_loc is not None:
+        row.append(pixel_loc[0])
+        row.append(pixel_loc[1])
     writer.writerow(row)
 
 
@@ -78,7 +81,7 @@ def rotate_z(theta):
          [0, 0, 1]])
 
 
-def gather_data_simple():
+def gather_single_data_simple():
     """This editor example shows how to interact with holodeck worlds while they are being built
     in the Unreal Engine. Most people that use holodeck will not need this.
     """
@@ -145,5 +148,54 @@ def pixel_loc(theta_z, theta_y, width, height):
     return x_pos, y_pos
 
 
+def gather_single_data_adv():
+    """
+        1. Set camera position
+        2. Set direction and distance of plane
+        3. Set orientation of plane
+        4. Save image
+        5. Record orientation and pixel location of plane
+        6. Repeat
+    :return:
+    """
+    img_loc = 'data/NewData/'
+    with open(img_loc + 'orientations.csv', mode='w') as employee_file:
+
+        sensors = [Sensors.ORIENTATION_SENSOR, Sensors.LOCATION_SENSOR, Sensors.VIEWPORT_CAPTURE]
+        agent = AgentDefinition("uav0", agents.UavAgent, sensors)
+        env = HolodeckEnvironment(agent, start_world=False)
+        state, _, _, _ = env.reset()
+
+        orientation_writer = csv.writer(employee_file, delimiter=',')
+        img_ind = 0
+
+        # 1. Set camera Position
+        camera_pos = [0, 0, 0]
+
+        # 2. Set direction and distance of plane from camera
+        min_dist = 10
+        max_dist = 20
+        plane_dist = np.random.randn((1)) * (max_dist - min_dist) + min_dist
+
+        theta_y = np.random.randn((1)) * math.pi / 2
+        theta_z = np.random.randn((1)) * 2 * math.pi
+        plane_dir = np.matmul(np.matmul(rotate_z(theta_z), rotate_y(-theta_y)), np.array([1, 0, 0]))
+        relative_plane_loc = plane_dir * plane_dist
+
+        # 3. Set orientation of plane
+        iters = 100
+
+        for i in range(0, iters):
+            rot = np.random.randn((3))*2* math.pi
+            loc = camera_pos + relative_plane_loc
+            env.teleport("uav0", location=loc, rotation=rot)
+            new_direction = np.matmul(np.matmul(rotate_z(theta_z), rotate_y(theta_y)), np.array([1,0,0]))
+            env.teleport_camera([0, 0, 0], list(new_direction))
+            state = env.tick()["uav0"]
+            pixel = pixel_loc(theta_z, theta_y, 512, 512)
+            save_img(state, orientation_writer, img_loc, img_ind, pixel_loc = pixel)
+            img_ind += 1
+
+
 if __name__ == '__main__':
-    uav_tracker()
+    gather_single_data_adv()
