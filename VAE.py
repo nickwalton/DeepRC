@@ -5,11 +5,12 @@ import matplotlib.pyplot as plt
 import cv2
 import math
 import scipy.misc
+from tqdm import tqdm
 import bisect
 
-
 img_transform = transforms.Compose([
-    transforms.CenterCrop((128, 128)),
+    #transforms.CenterCrop((128, 128)),
+    transforms.Resize((128,128)),
     transforms.ToTensor()
 ])
 
@@ -82,7 +83,7 @@ class CodeBook(object):
         self.z_vecs = []
         self.rots = []
 
-        for i in range(len(dataset)):
+        for i in tqdm(range(len(dataset))):
             sample = dataset[i]
             z = self.model.encode(sample[0].unsqueeze(0))
             self.z_vecs.append(z[0])
@@ -128,6 +129,8 @@ def train(model, train_loader, optimizer, loss_func, epoch):
 
     print("Epoch" + str(epoch) + " Training Loss: " + str(total_loss.item()))
 
+    return total_loss.item()
+
 
 def test(model, test_loader, loss_func, epoch):
     model.eval()
@@ -155,13 +158,12 @@ def display_img(img):
     plt.imshow(np.swapaxes(img.cpu().detach().numpy(), 0, 2))
 
 
-def ae_train():
-    batch_size = 128
+def ae_train(image_dir):
+    batch_size = 256
     epochs = 1000
     lr = 1e-3
 
-    csv_path = "data/plane_data1/orientations.csv"
-    image_dir = "data/plane_data1"
+    csv_path = image_dir + "/orientations.csv"
     pose_dataset = SinglePoseDataset(image_dir, csv_path, img_transform, label="image")
 
     ex_img = pose_dataset[0][0]
@@ -172,42 +174,55 @@ def ae_train():
     optimizer = optim.Adam(model.parameters(), lr=lr)
     loss_func = nn.MSELoss()
 
-    for epoch in range(1, epochs + 1):
-        train(model, train_loader, optimizer, loss_func, epoch)
-        test(model, train_loader, loss_func, epoch)
+    for epoch in range(0, epochs + 1):
+        res = train(model, train_loader, optimizer, loss_func, epoch)
+        #test(model, train_loader, loss_func, epoch)
 
-        if epoch % 25 is 0:
-            torch.save(model, "models/AE-model" + str(epoch))
+        if epoch % 10 is 0:
+            torch.save(model, "models/LRG_AE-model" + str(res))
 
 
-def ae_test():
-    csv_path = "data/plane_data1/orientations.csv"
-    image_dir = "data/plane_data1"
-    pose_dataset = SinglePoseDataset(image_dir, csv_path, img_transform, len=500)
+def ae_test(codebook_img_dir, sample_img_dir, test_img_folder):
+
+    csv_path = codebook_img_dir + "/orientations.csv"
+
+    codebook_dataset = SinglePoseDataset(codebook_img_dir, csv_path, img_transform)
+
+    sample_csv_path = sample_img_dir + "/orientations.csv"
+    sample_dataset = SinglePoseDataset(sample_img_dir, sample_csv_path, img_transform)
 
     model = torch.load("models/AE-model300")
-    codebook = CodeBook(model, pose_dataset)
+    print("Building codebook")
+    codebook = CodeBook(model, codebook_dataset)
 
-    for i in range(500, 600):
-        sample = pose_dataset[i]
+    print("Testing Images")
+    for i in tqdm(range(0, 100)):
+        sample = sample_dataset[i]
         img = sample[0]
         orientation = sample[1]
         preds = codebook.predict(img, n=4)
+
         pred_indices = [pred[0] for pred in preds]
+        pred_dists = [pred[1] for pred in preds]
 
-        scipy.misc.imsave('test_imgs/test' + str(i) + 'input.jpg',
-                          np.swapaxes(img.numpy(), 0, 2))
+        #scipy.misc.imsave(test_img_folder + str(i) + 'input.jpg',
+        #                  np.swapaxes(img.numpy(), 0, 2))
 
-        for j in range(4):
-            pred_pic = pose_dataset[pred_indices[j]][0]
+        #for j in range(4):
+        #    pred_pic = codebook_dataset[pred_indices[j]][0]
 
-            scipy.misc.imsave('test_imgs/test' + str(i) + str("-") + str(j) + 'output.jpg',
-                              np.swapaxes(pred_pic.numpy(), 0, 2))
-
-        print("Saving img" + str(i))
+        #    scipy.misc.imsave(test_img_folder + str(i) + str("-") + str(j) + "dist" + str(pred_dists[j]) + 'output.jpg',
+        #                      np.swapaxes(pred_pic.numpy(), 0, 2))
 
 
 if __name__ == '__main__':
-    ae_test()
+    #codebook_img_dir = "data/large_uniform_without_sky"
+    #sample_img_dir = "data/uniform_with_sky"
+    #test_img_folder = 'test_imgs/largecodebooktest/'
+    #ae_test(codebook_img_dir, sample_img_dir, test_img_folder)
 
+    # TODO change data gathering framework so that the relative camera position and plane position is the same every time. 
+
+    image_dir = "data/large_uniform_without_sky"
+    ae_train(image_dir)
 
