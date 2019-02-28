@@ -17,9 +17,15 @@ import csv
 
 class SinglePoseDataset(Dataset):
 
-    def __init__(self, img_dir, csv_file, img_transform, label="orientation", len=None):
+    def __init__(self, img_dir, csv_file=None, img_transform=None, label="orientation", len=None):
+        if csv_file is None:
+            csv_file = img_dir + "/orientations.csv"
+
         self.data = pd.read_csv(csv_file)
-        self.transform = img_transform
+        if img_transform is None:
+            self.transform = transforms.Compose([])
+        else:
+            self.transform = img_transform
         self.label = label
         self.adjusted_len = len
 
