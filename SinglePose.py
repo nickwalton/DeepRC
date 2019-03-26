@@ -81,7 +81,7 @@ def train_pose():
         train(model, train_loader, optimizer, loss_func)
         test(model, train_loader, loss_func)
 
-        torch.save(model, "models/single-pose-model")
+        torch.save(model, "models/single-axis-model")
 
 
 # TODO test that this is the same after as the dataset method.
@@ -131,7 +131,7 @@ def predict_pose():
 
 
 if __name__ == '__main__':
-    predict_pose()
+    train_pose()
 
 
 
