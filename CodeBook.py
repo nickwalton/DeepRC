@@ -12,7 +12,7 @@ from torch.utils.data.sampler import SubsetRandomSampler
 img_transform = transforms.Compose([
     transforms.CenterCrop((128, 128)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 ])
 
 
@@ -38,6 +38,25 @@ class UpConvLayer(nn.Module):
         return self.activation(result)
 
 
+def rotationMatrixToEulerAngles(R):
+    R = R.reshape((3,3))
+
+    sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
+
+    singular = sy < 1e-6
+
+    if not singular:
+        x = math.atan2(R[2, 1], R[2, 2])
+        y = math.atan2(-R[2, 0], sy)
+        z = math.atan2(R[1, 0], R[0, 0])
+    else:
+        x = math.atan2(-R[1, 2], R[1, 1])
+        y = math.atan2(-R[2, 0], sy)
+        z = 0
+
+    return np.array([x, y, z])
+
+
 def convert_to_degrees(sin_cos):
     return np.arctan2(sin_cos[0,:,0], sin_cos[0,:,1])*180.0/math.pi
 
@@ -48,20 +67,20 @@ class AutoEncoder(nn.Module):
         super(AutoEncoder, self).__init__()
 
         self.encoder = nn.Sequential(
-            DownConvLayer(3, 128),
-            DownConvLayer(128, 256),
-            DownConvLayer(256, 256),
-            DownConvLayer(256, 512))
+            DownConvLayer(3, 16),
+            DownConvLayer(16, 32),
+            DownConvLayer(32, 64),
+            DownConvLayer(64, 128))
 
         self.decoder = nn.Sequential(
-            UpConvLayer(512, 256),
-            UpConvLayer(256, 256),
-            UpConvLayer(256, 128),
-            UpConvLayer(128, 3, activation=nn.Sigmoid)
+            UpConvLayer(128, 64),
+            UpConvLayer(64, 32),
+            UpConvLayer(32, 16),
+            UpConvLayer(16, 3, activation=nn.Tanh)
         )
 
-        self.encode_fc = nn.Linear(512*8*8, 128)
-        self.decode_fc = nn.Linear(128, 512*8*8)
+        self.encode_fc = nn.Linear(128*8*8, 128)
+        self.decode_fc = nn.Linear(128, 128*8*8)
 
     def forward(self, x):
         z = self.encode(x)
@@ -75,7 +94,7 @@ class AutoEncoder(nn.Module):
 
     def decode(self, z):
         z = self.decode_fc(z)
-        z = self.decoder(z.reshape((z.shape[0], 512, 8, 8)))
+        z = self.decoder(z.reshape((z.shape[0], 128, 8, 8)))
         return z
 
 
@@ -156,14 +175,12 @@ def test(model, test_loader, loss_func):
 
 
 def run_codebook():
-    batch_size = 48
-    lr = 3e-4
-    epochs = 0
-    #model = AutoEncoder().cuda()
-    model = torch.load("models/ae-model")
-
-    csv_path = "data/OneAxis/orientations.csv"
-    image_dir = "data/OneAxis"
+    batch_size = 128
+    lr = 6e-4
+    epochs = 20
+    model = AutoEncoder().cuda()
+    #model = torch.load("models/ae-model")
+    image_dir = "data/ThousandSet"
     pose_dataset = SinglePoseDataset(image_dir, img_transform)
     shuffle_dataset = True
     test_split = 0.2
@@ -182,8 +199,7 @@ def run_codebook():
 
     train_loader = torch.utils.data.DataLoader(pose_dataset, batch_size=batch_size,
                                                sampler=train_sampler)
-    test_loader = torch.utils.data.DataLoader(pose_dataset, batch_size=1,
-                                                    sampler=test_sampler)
+    test_loader = torch.utils.data.DataLoader(pose_dataset, batch_size=1, sampler=test_sampler)
 
     codebook_loader = torch.utils.data.DataLoader(pose_dataset, batch_size=1,
                                                     sampler=train_sampler)
@@ -194,27 +210,33 @@ def run_codebook():
     for epoch in range(1, epochs+1):
         train(model, train_loader, optimizer, loss_func)
         train_loss = test(model, train_loader, loss_func)
-        print("Epoch ", epoch, " Train Loss: " + str(train_loss),)
+        print("Epoch ", epoch, " Train Loss: " + str(train_loss))
+        test_loss = test(model, test_loader, loss_func)
+        print("Epoch ", epoch, " Test Loss: " + str(test_loss))
 
-        if epoch % -1 is 0:
-            torch.save(model, "models/ae-model")
+        if epoch % 5 is 0:
+            torch.save(model, "models/ae-model-8k")
 
     codebook = CodeBook(model, codebook_loader)
 
-    err = 0.0
+    err = np.zeros(9)
     num = 0
     for batch_idx, (data, target) in enumerate(test_loader):
 
         closest_img, pred = codebook.predict(data, get_img=True)
         imsave("test_imgs/oneaxis/im" + str(num) + "closest.jpg", np.swapaxes(closest_img[0], 0, 2))
         imsave("test_imgs/oneaxis/im" + str(num) + "original.jpg", np.swapaxes(data[0], 0, 2))
-        err += loss_func(pred, target).item()
+        err += np.abs(target.cpu().numpy()[0] - pred.cpu().numpy()[0])
 
-        print("Target Degrees ", target.cpu().numpy()[0], " Pred Degrees ", pred.cpu().numpy()[0])
+        #print("Orient Diff " + str(num), " ", target.cpu().numpy()[0] - pred.cpu().numpy()[0])
+        pred_angles = rotationMatrixToEulerAngles(pred)
+        target_angles = rotationMatrixToEulerAngles(target)
+        print("Pred: ", pred_angles*180/math.pi, " Target: ", target_angles*180/math.pi)
 
         num += 1
 
     print("Avg err: ", err/num)
+    print("Total avg Err: ", sum(err)/(num*9))
 
 
 if __name__ == '__main__':

@@ -19,7 +19,12 @@ from os import listdir
 
 class SinglePoseDataset(Dataset):
 
-    def __init__(self, img_dir, img_transform=None, sin_cos=False):
+    def __init__(self, img_dir, img_transform=None, custom_len=None):
+
+        if custom_len is None:
+            self.custom_length = -1
+        else:
+            self.custom_length = custom_len
 
         csv_file = img_dir + "/orientations.csv"
         self.data = pd.read_csv(csv_file)
@@ -30,10 +35,12 @@ class SinglePoseDataset(Dataset):
 
         self.img_dir = img_dir + "/images"
         self.len = len(os.listdir(self.img_dir))
-        self.use_sin_cos = sin_cos
 
     def __len__(self):
-        return self.len
+        if self.custom_length is not -1:
+            return self.custom_length
+        else:
+            return self.len
 
     def __getitem__(self, idx):
         angles = self.data.iloc[idx, 0:].values.astype(dtype=np.float32)
@@ -45,10 +52,7 @@ class SinglePoseDataset(Dataset):
         orig_image = Image.open(img_path)
         image = self.transform(orig_image).unsqueeze(0)
 
-        if self.use_sin_cos:
-            sample = (image[0], sin_cos)
-        else:
-            sample = (image[0], angles[0:3])
+        sample = (image[0], angles[0:9])
 
         return sample
 
@@ -57,8 +61,11 @@ def save_img(state, writer, img_loc, img_ind, rot, pixel_loc=None):
     image = state[Sensors.VIEWPORT_CAPTURE][:, :, 0:3]
     img_name = img_loc + "images/im" + str(img_ind) + ".jpg"
     cv2.imwrite(img_name, image)
-    row = rot
+    row = list(state[Sensors.ORIENTATION_SENSOR].flatten())
     if pixel_loc is not None:
+        row.append(row[0])
+        row.append(row[1])
+        row.append(row[2])
         row.append(pixel_loc[0])
         row.append(pixel_loc[1])
     writer.writerow(row)
@@ -92,12 +99,12 @@ def gather_single_data(img_loc):
     agent = AgentDefinition("uav0", agents.UavAgent, sensors)
     env = HolodeckEnvironment(agent, start_world=False)
     state, _, _, _ = env.reset()
-    wait_time = 4
+    wait_time = 2
 
     with open(img_loc + 'orientations.csv', mode='w') as employee_file:
         orientation_writer = csv.writer(employee_file, delimiter=',')
-        orientation_writer.writerow(["x","y","z","pixel_x","pixel_y"])
-        n_images = 2000
+        orientation_writer.writerow(["u1x","u1y","u1z","u2x","u2y","u2z","u3x","u3y","u3z","rotx","roty", "rotz","pixel_x","pixel_y"])
+        n_images = 8000
 
         for img_ind in range(0, n_images):
 
@@ -106,6 +113,8 @@ def gather_single_data(img_loc):
             rot_z = np.random.randint(-180, 180)
 
             rot = [rot_x, rot_y, rot_z]
+
+
             loc = state[Sensors.LOCATION_SENSOR]*100
             env.teleport("uav0", location=loc, rotation=rot)
             for _ in range(wait_time):
@@ -118,6 +127,7 @@ def gather_single_data(img_loc):
 
             # env.teleport_camera([0, 0, 0], list(new_direction))
             pixel = pixel_loc(theta_z, theta_y, 512, 512)
+            orientation = state[Sensors.ORIENTATION_SENSOR]
 
             save_img(state, orientation_writer, img_loc, img_ind, rot, pixel_loc=pixel)
 
@@ -210,5 +220,5 @@ def gather_single_data_adv():
 
 
 if __name__ == '__main__':
-    img_loc = 'data/ThousandSet/'
+    img_loc = 'data/EightThousandRandom/'
     gather_single_data(img_loc)
