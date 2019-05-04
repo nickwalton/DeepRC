@@ -17,15 +17,58 @@ import csv
 from os import listdir
 
 
+def rotationMatrixToEulerAngles(R):
+
+    R = np.reshape(R.cpu().numpy(), (3,3))
+    sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
+
+    singular = sy < 1e-6
+
+    if not singular:
+        x = math.atan2(R[2, 1], R[2, 2])
+        y = math.atan2(-R[2, 0], sy)
+        z = math.atan2(R[1, 0], R[0, 0])
+    else:
+        x = math.atan2(-R[1, 2], R[1, 1])
+        y = math.atan2(-R[2, 0], sy)
+        z = 0
+
+    return np.array([x, y, z])
+
+
+def eulerAnglesToRotationMatrix(theta):
+    R_x = np.array([[1, 0, 0],
+                    [0, math.cos(theta[0]), -math.sin(theta[0])],
+                    [0, math.sin(theta[0]), math.cos(theta[0])]
+                    ])
+
+    R_y = np.array([[math.cos(theta[1]), 0, math.sin(theta[1])],
+                    [0, 1, 0],
+                    [-math.sin(theta[1]), 0, math.cos(theta[1])]
+                    ])
+
+    R_z = np.array([[math.cos(theta[2]), -math.sin(theta[2]), 0],
+                    [math.sin(theta[2]), math.cos(theta[2]), 0],
+                    [0, 0, 1]
+                    ])
+
+    R = np.dot(R_z, np.dot(R_y, R_x))
+
+    return R
+
+
 class SinglePoseDataset(Dataset):
 
-    def __init__(self, img_dir, img_transform=None, custom_len=None):
+    def __init__(self, img_dir, img_transform=None, custom_len=None, euler=False, im_name="/im"):
 
         if custom_len is None:
             self.custom_length = -1
         else:
             self.custom_length = custom_len
 
+        self.im_name = im_name
+
+        self.euler = euler
         csv_file = img_dir + "/orientations.csv"
         self.data = pd.read_csv(csv_file)
         if img_transform is None:
@@ -48,26 +91,30 @@ class SinglePoseDataset(Dataset):
         cos = np.cos(angles*math.pi/180.0)
         sin_cos = np.stack([sin, cos], axis=1)
         sin_cos = torch.Tensor(sin_cos)
-        img_path = self.img_dir + "/im" + str(idx) + ".jpg"
+        img_path = self.img_dir + self.im_name + str(idx) + ".jpg"
         orig_image = Image.open(img_path)
-        image = self.transform(orig_image).unsqueeze(0)
+        image = self.transform(orig_image)
 
-        sample = (image[0], angles[0:9])
+        if self.euler:
+            sample = (image, angles[9:12])
+        else:
+            sample = (image, angles[0:9])
 
         return sample
 
 
-def save_img(state, writer, img_loc, img_ind, rot, pixel_loc=None):
+def save_img(state, writer, img_loc, img_ind, rot, pixel_loc=None, added_x=None):
     image = state[Sensors.VIEWPORT_CAPTURE][:, :, 0:3]
     img_name = img_loc + "images/im" + str(img_ind) + ".jpg"
     cv2.imwrite(img_name, image)
     row = list(state[Sensors.ORIENTATION_SENSOR].flatten())
     if pixel_loc is not None:
-        row.append(row[0])
-        row.append(row[1])
-        row.append(row[2])
+        row.append(rot[0])
+        row.append(rot[1])
+        row.append(rot[2])
         row.append(pixel_loc[0])
         row.append(pixel_loc[1])
+        row.append(added_x)
     writer.writerow(row)
 
 
@@ -91,7 +138,7 @@ def rotate_z(theta):
         [ math.sin(theta), math.cos(theta), 0],
          [0, 0, 1]])
 
-def gather_single_data(img_loc):
+def gather_single_data(img_loc, n_images=2000):
     """This editor example shows how to interact with holodeck worlds while they are being built
     in the Unreal Engine. Most people that use holodeck will not need this.
     """
@@ -99,24 +146,25 @@ def gather_single_data(img_loc):
     agent = AgentDefinition("uav0", agents.UavAgent, sensors)
     env = HolodeckEnvironment(agent, start_world=False)
     state, _, _, _ = env.reset()
-    wait_time = 2
+    wait_time = 5
+    loc = np.copy(state[Sensors.LOCATION_SENSOR]) * 100
 
     with open(img_loc + 'orientations.csv', mode='w') as employee_file:
         orientation_writer = csv.writer(employee_file, delimiter=',')
-        orientation_writer.writerow(["u1x","u1y","u1z","u2x","u2y","u2z","u3x","u3y","u3z","rotx","roty", "rotz","pixel_x","pixel_y"])
-        n_images = 8000
+        orientation_writer.writerow(["u1x","u1y","u1z","u2x","u2y","u2z","u3x","u3y","u3z","rotx","roty", "rotz","pixel_x","pixel_y", "added_x"])
 
         for img_ind in range(0, n_images):
 
             rot_x = np.random.randint(-180, 180)
-            rot_y = np.random.randint(-180, 180)
+            rot_y = np.random.randint(-90, 90)
             rot_z = np.random.randint(-180, 180)
 
             rot = [rot_x, rot_y, rot_z]
 
-
-            loc = state[Sensors.LOCATION_SENSOR]*100
-            env.teleport("uav0", location=loc, rotation=rot)
+            tel_loc = np.copy(loc)
+            added_x = np.random.randint(-50,100)
+            tel_loc[0] += added_x
+            env.teleport("uav0", location=tel_loc, rotation=rot)
             for _ in range(wait_time):
                 state = env.tick()["uav0"]
 
@@ -129,7 +177,7 @@ def gather_single_data(img_loc):
             pixel = pixel_loc(theta_z, theta_y, 512, 512)
             orientation = state[Sensors.ORIENTATION_SENSOR]
 
-            save_img(state, orientation_writer, img_loc, img_ind, rot, pixel_loc=pixel)
+            save_img(state, orientation_writer, img_loc, img_ind, rot, pixel_loc=pixel, added_x=added_x)
 
 
 def uav_tracker():
@@ -219,6 +267,45 @@ def gather_single_data_adv():
             img_ind += 1
 
 
+def create_matching_background(n=500, start_ind=0):
+    orientation_path = "data/April18Exp/blank10k/orientations.csv"
+    blank_data = pd.read_csv(orientation_path)
+    img_loc = "data/April18Exp/background10k/"
+    new_orient_path = img_loc + "orientations.csv"
+    normal_camera_dist = -215
+    # If first
+    with open(new_orient_path, mode='a') as employee_file:
+        orientation_writer = csv.writer(employee_file, delimiter=',')
+
+        end_ind = start_ind + n
+
+        sensors = [Sensors.ORIENTATION_SENSOR, Sensors.IMU_SENSOR, Sensors.LOCATION_SENSOR, Sensors.VIEWPORT_CAPTURE]
+        agent = AgentDefinition("uav0", agents.UavAgent, sensors)
+        env = HolodeckEnvironment(agent, start_world=False)
+        state, _, _, _ = env.reset()
+        wait_time = 5
+        loc = np.copy(state[Sensors.LOCATION_SENSOR]) * 100
+
+        for img_ind in range(start_ind, end_ind):
+
+            orients = blank_data.iloc[img_ind, 0:].values.astype(dtype=np.float32)
+
+            rot = orients[9:12]
+            added_y = 0
+            added_x = orients[14]
+            pixel = orients[12:14]
+            tel_loc = np.copy(loc)
+            tel_loc[0] += added_x
+            env.teleport("uav0", location=tel_loc, rotation=rot)
+            for _ in range(wait_time):
+                state = env.tick()["uav0"]
+
+            save_img(state, orientation_writer, img_loc, img_ind, rot, pixel_loc=pixel, added_x=added_x)
+
+    env.__on_exit__()
+
+
 if __name__ == '__main__':
-    img_loc = 'data/EightThousandRandom/'
-    gather_single_data(img_loc)
+    #img_loc = "data/April18Exp/blank10k/"
+    #gather_single_data(img_loc, n_images=10000)
+    create_matching_background(start_ind=9000, n=1000)
