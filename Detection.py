@@ -1,3 +1,6 @@
+# Uses this repo https://github.com/amdegroot/ssd.pytorch
+
+
 import os
 import sys
 module_path = os.path.abspath(os.path.join('singleshotdetection'))
